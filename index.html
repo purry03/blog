@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <meta charset="utf-8">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <title>Blog</title>
+    <meta name="description" content="">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link rel="stylesheet" href="index.css">
+</head>
+
+<body>
+
+    <div class="hero">
+        <h1>Node Music Streaming Service</h1>
+        <h3>Make your own online radio server in pure Node.js
+
+        </h3>
+    </div>
+
+    <div class="main-wrapper">
+        <div class="left-wrapper">
+            <nav>
+                <ul>
+                    <li>
+                        What are we building today?
+                    </li>
+                    <li>
+                        Control panel
+                    </li>
+                    <li>Streaming
+                    </li>
+                </ul>
+            </nav>
+        </div>
+        <div class="right-wrapper">
+            <div class="section">
+                <div class="heading">
+                    <h1>What are we building today?</h1>
+                </div>
+                <div class="content">
+                    <p>The goal is to implement a Node.js HTTP server that will have an endpoint intended for streaming
+                        songs, i.e., audio data. A client could then start consuming the data by making a request to
+                        that endpoint.</p>
+
+                    <p>We also need to implement some kind of a control panel so we can manage what song will be
+                        streamed next. On top of that, we will implement a simple webpage with a play button, similar to
+                        how most the online radios look.</p>
+
+                    <p>We will put all of this into a single application, which would not be so smart for a real-world
+                        solution, but hey, we are just having fun. The entire code from this article can be found on my
+                        GitHub repo here.</p>
+
+                    <p>Let&rsquo;s begin!</p>
+                </div>
+            </div>
+            <div class="section">
+                <div class="heading">
+                    <h1>Control panel</h1>
+                </div>
+                <div class="content">
+                    <p>Since I love meddling with the terminal, and Node.js has a built in CLI, we will implement the
+                        control panel in the form of a terminal GUI. After a little bit of research, I discovered that
+                        neo-blessed is a library made for this task.</p>
+
+                    <p>neo-blessed has a concept of boxes. Those are basically windows that you can create, stylize, and
+                        position in the terminal, like components in a browser using HTML and CSS.</p>
+
+                    <p>Let&rsquo;s first define the main screen that will wrap everything else. We will put it inside
+                        the View class:</p>
+
+
+                    <pre>class View {
+constructor() {
+    const screen = NeoBlessed.screen({ smartSCR: true });
+    screen.title = 'Node Radio Mini';
+    screen.key(['escape', 'C-c'], () => process.exit(0));   
+    this._screen = screen;
+}
+appendBoxes(boxes) {
+    for (const box of boxes) {
+        this._screen.append(box);
+    }
+}
+render() {
+    this._screen.render();
+}
+}</pre>
+
+
+                    <p>Here we create a main screen of the view layer, with a render method that we will use
+                        periodically to render the entire view. We attach some keys (Ctrl+C, Esc), which we could press
+                        to terminate the app if we wanted.</p>
+
+                    <p>Next, we need to implement the different sections of the view. Each section will be a neo-blessed
+                        box, like mentioned earlier. We will implement a basic class for this, which will be extended by
+                        other classes later:</p>
+
+
+                    <pre>class TerminalBox {
+constructor(config) {
+    this.box = NeoBlessed.box(config);
+}
+}</pre>
+
+                    <p>The most important thing to note here is that this class contains child items, which are also
+                        neo-blessed boxes. That&rsquo;s why there are both config and childConfig props passed in the
+                        constructor.</p>
+
+                    <p>Also, the class has a scroll method with which you can navigate the items with the help of and
+                        illusion made by different coloring of blurred and focused items. To help keep track of the
+                        index of the focused child item, we are using a helper class called FocusIndexer (defined on
+                        line 1 and instantiated on line 27).</p>
+
+                    <p>Lastly, there is a createBoxChildAndAppend method for adding new children. This is not, all but
+                        in the interest of time, I will stop here.</p>
+                </div>
+            </div>
+            <div class="section">
+                <div class="heading">
+                    <h1>Streaming</h1>
+                </div>
+                <div class="content">
+                    <p>The songs from the queue should be sent to every consumer that is listening at the moment. This
+                        is the next thing we need to implement. As I already mentioned, the Queue class will be in
+                        charge of showing the queued up songs in the GUI. On top of that, this class will contain the
+                        logic for emitting the songs to the clients.</p>
+
+                    <p>Since we want to gradually broadcast audio data to the clients, it is somewhat obvious that this
+                        will need to be implemented via streams or, in our case, the Node.js Stream API.</p>
+
+                    <p>Now the first thing to note here is that the Stream API is primarily invented for a one-to-one
+                        (unicast) transfer of chunked data in a pull-based manner, meaning the consumer determines the
+                        speed of the transfer based on the speed at which it can process the data.</p>
+
+                    <p>This is much better. As soon as a handler is attached to the data event, the readable will go to
+                        the flowing mode and start streaming the data. We now have an elegant way to achieve one-to-many
+                        transfer, i.e., to send the same chunk of data to every registered writable. On top of that, if
+                        no writable is present, the readable will continue to stream the data, which is what we need
+                        since songs on pretty much every radio must continue playing, even if no one is listening.
+                        &#55357;&#56898;</p>
+
+                    <p>We still haven&rsquo;t solved all the problems, though. If we only attach the handler, like in
+                        the last code snippet, the readable (i.e., the song) would be consumed pretty much in a couple
+                        of seconds. We don&rsquo;t want that; we want to stream the data slowly.</p>
+
+                    <p>This can be done by using some kind of a throttling mechanism to slow down the streaming of the
+                        chunks. In Node.js land, we can implement that with a transform stream (which is both a readable
+                        and a writable, as we mentioned already) and a timer function. The goal of this transform stream
+                        is to receive chunks from a readable and output the chunks to a writable at a determined rate,
+                        which will be handled by a timer function inside the transform stream itself.</p>
+
+                    <p>Since there are several published packages that already solve this problem, we&rsquo;re going to
+                        use one called [throttle](https://www.npmjs.com/package/throttle) from npm. It is a class you
+                        can use to instantiate a new transform stream by passing one argument: a number, representing
+                        bytes per second. This transform stream would then limit the streaming of the chunks to be no
+                        faster than the bytes per second you provided.</p>
+                </div>
+            </div>
+        </div>
+    </div>
+</body>
+
+</html>
